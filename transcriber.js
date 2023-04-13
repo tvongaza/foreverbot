@@ -1,10 +1,11 @@
-const speech = require('@google-cloud/speech');
+const speech = require('@google-cloud/speech').v1p1beta1;
 const fs = require('fs');
 const { Storage } = require('@google-cloud/storage');
 const protobuf = require('protobufjs');
 
 const root = protobuf.loadSync([ // note: synchronous file read - use .load() to use callback API
-  './node_modules/@google-cloud/speech/build/protos/google/cloud/speech/v1/cloud_speech.proto',
+  // './node_modules/@google-cloud/speech/build/protos/google/cloud/speech/v1/cloud_speech.proto',
+  './node_modules/@google-cloud/speech/build/protos/google/cloud/speech/v1p1beta1/cloud_speech.proto',
   './node_modules/google-gax/build/protos/google/protobuf/timestamp.proto',
   './node_modules/google-gax/build/protos/google/protobuf/duration.proto',
   './node_modules/google-gax/build/protos/google/rpc/status.proto'
@@ -44,13 +45,11 @@ async function uploadFileToGcs(localFilePath) {
 
 // Save the operation name after starting the transcription
 async function startTranscription(fileName) {
-  const gcsUri = await uploadFileToGcs(fileName);
+  // const gcsUri = await uploadFileToGcs(fileName);
+  const gcsUri = "gs://purpleelf/audio-files/Episode_148_smaller_cut.mp3";
   const audio = {
     uri: gcsUri,
   };
-  // const audio = {
-  //   content: fs.readFileSync(fileName).toString('base64'),
-  // };
 
   // The audio file's encoding, sample rate in hertz, BCP-47 language code and other settings.
   const config = {
@@ -63,7 +62,7 @@ async function startTranscription(fileName) {
     enableWordConfidence: true,
     useEnhanced: true,
     enableWordTimeOffsets: true,
-    maxAlternatives: 1,
+    maxAlternatives: 2,
     adaptation: {
       phraseSetReferences: ["projects/754285314468/locations/global/phraseSets/Everquest"],
     },
@@ -94,22 +93,25 @@ async function getTranscriptionResults(operationName) {
   if (operation.done) {
     const response = decodeProtobufAny(operation.response)
     fs.writeFileSync('transcription.json', JSON.stringify(response));
-    // console.log(response)
-    const detailedTranscription = response.results.map(result => {
-      if (result.alternatives && result.alternatives[0].words && result.alternatives[0].words.length > 0) {
-        // console.log(result.alternatives[0].transcript, result.alternatives[0].words.map(word => word.speakerTag).join(' '));
-
-        const startTime = result.alternatives[0].words[0].startTime.seconds + (result.alternatives[0].words[0].startTime.nanos / 1e9);
-        const endTime = result.alternatives[0].words[result.alternatives[0].words.length - 1].endTime.seconds + (result.alternatives[0].words[result.alternatives[0].words.length - 1].endTime.nanos / 1e9);
-        const speakerTag = result.alternatives[0].words[0].speakerTag;
-        const transcript = result.alternatives[0].transcript;
-
-        return { startTime, endTime, speakerTag, transcript };
-      } else {
-        return null;
+    const words = response.results.at(-1).alternatives[0].words;
+    let detailedTranscription = [];
+    let lastSpeakerTag = null;
+    let lastTranscript = "";
+    words.forEach(word => {
+      if (word.speakerTag !== lastSpeakerTag) {
+        if (lastSpeakerTag !== null) {
+          detailedTranscription.push({ speakerTag: lastSpeakerTag, transcript: lastTranscript });
+        }
+        lastSpeakerTag = word.speakerTag;
+        lastTranscript = word.word;
+      } else if (word.speakerTag === lastSpeakerTag) {
+        lastTranscript += ` ${word.word}`;
       }
     });
+    detailedTranscription.push({ speakerTag: lastSpeakerTag, transcript: lastTranscript });
+
     // console.log('Detailed Transcription:', detailedTranscription);
+    fs.writeFileSync('transcription-cleaned.json', JSON.stringify(detailedTranscription));
     return detailedTranscription;
   } else {
     console.log('Transcription is not yet complete. Please try again later.');
@@ -121,7 +123,8 @@ async function main() {
   // const operationName = await startTranscription("~/Downloads/Episode_148_smaller_cut.mp3");
   // const operationName = "projects/754285314468/locations/global/operations/3173767909281124631"
   // const operationName = "1792521906477065949"
-  const operationName = "3173767909281124631"
+  // const operationName = "3173767909281124631"
+  const operationName = "7080013064407382538"
   getTranscriptionResults(operationName);
 }
 
